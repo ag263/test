@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Connection Visualizer</title>
+<style>
+  :root{--bg:#0c0c10;--sur:#14141a;--bdr:#2c2c3a;--txt:#e6e6f0;--mut:#5a5a72;--acc:#7b68ee;--mono:'Courier New',monospace;--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:28px 20px 48px}
+  h1{font-family:var(--mono);font-size:1rem;color:#a78bfa;letter-spacing:.1em;text-transform:uppercase}
+  .badge{font-family:var(--mono);font-size:.68rem;color:var(--mut);border:1px solid var(--bdr);border-radius:4px;padding:2px 7px}
+  .sub{font-size:.78rem;color:var(--mut);margin:4px 0 22px;width:100%;max-width:1200px}
+  .hdr{display:flex;align-items:baseline;gap:12px;margin-bottom:4px}
+  .drop{border:1.5px dashed var(--bdr);border-radius:14px;padding:36px 60px;text-align:center;cursor:pointer;transition:.2s;margin-bottom:28px;width:100%;max-width:460px}
+  .drop:hover{border-color:var(--acc);background:rgba(123,104,238,.06)}
+  .drop .icon{font-size:2rem;margin-bottom:8px}
+  .drop p{font-size:.83rem;color:var(--mut)}
+  .drop strong{color:var(--txt)}
+  #fi{display:none}
+  .btn{background:var(--acc);color:#fff;border:none;border-radius:7px;padding:8px 18px;font-family:var(--mono);font-size:.78rem;cursor:pointer;margin-top:12px;letter-spacing:.06em;transition:.2s}
+  .btn:hover{opacity:.82}
+  .bar{display:flex;align-items:center;gap:10px;margin-bottom:14px;width:100%;max-width:1200px;flex-wrap:wrap}
+  .bar label{font-family:var(--mono);font-size:.7rem;color:var(--mut);letter-spacing:.08em;text-transform:uppercase}
+  .bar select{background:#1c1c24;color:var(--txt);border:1.2px solid var(--bdr);border-radius:8px;padding:7px 32px 7px 11px;font-family:var(--mono);font-size:.78rem;cursor:pointer;outline:none;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%235a5a72'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;min-width:210px;transition:.2s}
+  .bar select:focus{border-color:var(--acc)}
+  .clr{background:transparent;color:var(--mut);border:1.2px solid var(--bdr);border-radius:8px;padding:7px 13px;font-family:var(--mono);font-size:.7rem;cursor:pointer;transition:.2s}
+  .clr:hover{color:var(--txt);border-color:var(--mut)}
+  .stats{font-family:var(--mono);font-size:.7rem;color:var(--mut);display:flex;gap:20px;margin-bottom:14px;width:100%;max-width:1200px}
+  .stats b{color:#a78bfa}
+  #out{width:100%;max-width:1200px}
+  .scroll{background:var(--sur);border:1px solid var(--bdr);border-radius:14px;overflow:auto;max-height:78vh;padding:24px 18px;scrollbar-width:thin;scrollbar-color:var(--bdr) transparent}
+  .scroll::-webkit-scrollbar{width:6px;height:6px}
+  .scroll::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:4px}
+  .node-label{font-family:var(--mono);font-size:11.5px;fill:#e6e6f0;pointer-events:none;dominant-baseline:central}
+  .col-tag{font-family:var(--mono);font-size:9px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;fill:var(--mut)}
+  .lnk{fill:none;stroke-width:1.5}
+  .lnk.dim{opacity:.04}.lnk.on{opacity:.55}
+  .ng{transition:opacity .2s}.ng.dim{opacity:.08}.ng.on{opacity:1}
+  .err{color:#e05c5c;font-family:var(--mono);font-size:.8rem;padding:12px 16px;background:rgba(224,92,92,.08);border:1px solid rgba(224,92,92,.25);border-radius:8px}
+</style>
+</head>
+<body>
+<div class="hdr"><h1>Connection Visualizer</h1><span class="badge">LOCAL · NO NETWORK</span></div>
+<p class="sub">All data stays in your browser — nothing leaves your machine</p>
+<div class="drop" id="dz" onclick="document.getElementById('fi').click()">
+  <div class="icon">📊</div>
+  <p><strong>Click to upload</strong> or drag &amp; drop</p>
+  <p style="margin-top:4px">Supports .xlsx / .xls / .csv</p>
+  <button class="btn" onclick="event.stopPropagation();document.getElementById('fi').click()">Choose File</button>
+</div>
+<input type="file" id="fi" accept=".xlsx,.xls,.csv">
+<div id="out"></div>
+<script>
+const PAL=['#e05c7a','#f0874a','#f5c842','#6bc96b','#4ac9b0','#4a9ef5','#9b7cf5','#f57cd8','#d4a84b','#7cf5a4','#4ad4f5','#f54a6b','#c96b4a','#a4e05c','#5cf5c9','#c07cf5','#f5a47c','#6be0c9','#f0d44a','#7caaf5','#e07cf5','#4af55c','#f5a4c9','#b8e04a'];
+const CH=7.15,HP=14,VP=7,NH=11.5+VP*2+2,RG=14,CG=260,LX=24;
+let recs=[],cmap={};
+
+// Dynamically load SheetJS so it's always available before use
+const xlsxScript=document.createElement('script');
+xlsxScript.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+xlsxScript.onerror=()=>showErr('Could not load spreadsheet library. Check network connection.');
+document.head.appendChild(xlsxScript);
+
+const dz=document.getElementById('dz'),fi=document.getElementById('fi');
+dz.addEventListener('dragover',e=>{e.preventDefault();dz.style.borderColor='#7b68ee'});
+dz.addEventListener('dragleave',()=>dz.style.borderColor='');
+dz.addEventListener('drop',e=>{e.preventDefault();dz.style.borderColor='';go(e.dataTransfer.files[0])});
+fi.addEventListener('change',e=>go(e.target.files[0]));
+
+function go(file){
+  if(!file)return;
+  if(typeof XLSX==='undefined'){showErr('Library still loading, please try again in a moment.');return}
+  const r=new FileReader();
+  r.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:'array'});
+      parse(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1}));
+    }catch(err){showErr(err.message)}
+  };
+  r.readAsArrayBuffer(file);
+}
+
+function plist(v){
+  if(!v||String(v).trim()===''||v==='[]')return[];
+  return String(v).replace(/^\[|\]$/g,'').split(',').map(s=>s.trim().replace(/^["']|["']$/g,'')).filter(Boolean);
+}
+
+function parse(rows){
+  if(!rows||rows.length<2)return showErr('File is empty or has only headers.');
+  const h=rows[0].map(s=>String(s).toLowerCase().trim());
+  const ni=h.indexOf('name'),c1=h.indexOf('col1'),c2=h.indexOf('col2');
+  if(ni<0)return showErr('No "name" column found.');
+  recs=rows.slice(1).map(r=>({name:r[ni]?String(r[ni]).trim():null,col1:c1>=0?plist(r[c1]):[],col2:c2>=0?plist(r[c2]):[]})).filter(r=>r.name);
+  recs.forEach((r,i)=>cmap[r.name]=PAL[i%PAL.length]);
+  dz.style.display='none';
+  render('__all__');
+}
+
+function bw(t){return Math.ceil(String(t).length*CH)+HP*2}
+function sid(s){return String(s).replace(/[^a-zA-Z0-9]/g,'_')}
+function eh(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function ea(s){return String(s).replace(/"/g,'&quot;').replace(/'/g,"\\'")}
+function showErr(m){document.getElementById('out').innerHTML=`<div class="err">⚠ ${eh(m)}</div>`}
+
+function render(sel){
+  const rseen=new Set(),rall=[];
+  recs.forEach(r=>[...r.col1,...r.col2].forEach(v=>{if(!rseen.has(v)){rseen.add(v);rall.push(v)}}));
+  const isAll=sel==='__all__';
+  const aN=new Set(),aR=new Set();
+  recs.forEach(r=>{if(isAll||r.name===sel){aN.add(r.name);[...r.col1,...r.col2].forEach(v=>aR.add(v))}});
+
+  const LW=Math.max(...recs.map(r=>bw(r.name)),60);
+  const RW=rall.length?Math.max(...rall.map(v=>bw(v)),40):40;
+  const RX=LX+LW+CG,SP=LX+LW+CG/2;
+  const yOf=i=>36+i*(NH+RG);
+  const ri=Object.fromEntries(rall.map((v,i)=>[v,i]));
+  const svgH=36+Math.max(recs.length,rall.length)*(NH+RG)+20;
+  const svgW=RX+RW+24;
+
+  let defs='<defs>';
+  recs.forEach(r=>{defs+=`<marker id="a${sid(r.name)}" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,1 L6,3.5 L0,6Z" fill="${cmap[r.name]}"/></marker>`});
+  defs+='</defs>';
+
+  let links='';
+  recs.forEach((r,i)=>{
+    const c=cmap[r.name],id=sid(r.name),on=aN.has(r.name),y1=yOf(i)+NH/2;
+    [...r.col1,...r.col2].forEach(v=>{
+      if(ri[v]===undefined)return;
+      const y2=yOf(ri[v])+NH/2;
+      links+=`<path class="lnk ${on?'on':'dim'}" marker-end="url(#a${id})" style="stroke:${c}" d="M${LX+LW},${y1}C${SP},${y1} ${SP},${y2} ${RX-8},${y2}"/>`;
+    });
+  });
+
+  const box=(x,y,w,lbl,col,dim)=>`<g class="ng ${dim?'dim':'on'}"><rect x="${x}" y="${y}" width="${w}" height="${NH}" rx="5" style="fill:${col}18;stroke:${col};stroke-width:1.4"/><text x="${x+w/2}" y="${y+NH/2}" text-anchor="middle" class="node-label">${eh(lbl)}</text></g>`;
+
+  let nodes='';
+  recs.forEach((r,i)=>nodes+=box(LX,yOf(i),LW,r.name,cmap[r.name],!aN.has(r.name)));
+  rall.forEach((v,i)=>{
+    const own=recs.find(r=>[...r.col1,...r.col2].includes(v)&&aN.has(r.name));
+    nodes+=box(RX,yOf(i),RW,v,own?cmap[own.name]:'#556080',!aR.has(v));
+  });
+
+  const hdrs=`<text x="${LX+LW/2}" y="20" text-anchor="middle" class="col-tag">NAME</text><text x="${RX+RW/2}" y="20" text-anchor="middle" class="col-tag">VALUES</text>`;
+  const svg=`<svg width="${svgW}" height="${svgH}" xmlns="http://www.w3.org/2000/svg" style="display:block">${defs}${hdrs}${links}${nodes}</svg>`;
+  const opts=`<option value="__all__">— Show all —</option>`+recs.map(r=>`<option value="${ea(r.name)}"${sel===r.name?' selected':''}>${eh(r.name)}</option>`).join('');
+  const total=recs.reduce((n,r)=>n+r.col1.length+r.col2.length,0);
+
+  document.getElementById('out').innerHTML=`
+    <div class="bar"><label>Filter</label><select onchange="render(this.value)">${opts}</select><button class="clr" onclick="render('__all__')">Show All</button></div>
+    <div class="stats"><span><b>${recs.length}</b> names</span><span><b>${rall.length}</b> values</span><span><b>${total}</b> connections</span></div>
+    <div class="scroll">${svg}</div>`;
+}
+</script>
+</body>
+</html>
