@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hierarchy Visualizer</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#f5f5f3;color:#1a1a18;min-height:100vh}
+header{background:#fff;border-bottom:.5px solid #ddd;padding:14px 24px;font-size:15px;font-weight:500}
+main{padding:20px 24px;max-width:1100px;margin:0 auto}
+
+#drop{border:1.5px dashed #bbb;border-radius:10px;background:#fff;padding:60px 24px;text-align:center;cursor:pointer;transition:.2s}
+#drop:hover,#drop.over{border-color:#7C5CBF;background:#faf8ff}
+#drop p{color:#666;margin-top:8px;font-size:13px}
+#file-input{display:none}
+
+#panel{display:none}
+.top{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.badge{font-size:12px;color:#666;background:#eee;padding:2px 9px;border-radius:20px}
+button{padding:7px 14px;border:.5px solid #bbb;border-radius:6px;background:#fff;font-size:13px;cursor:pointer;font-family:inherit}
+button:hover{background:#f0f0ee}
+
+.filters{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.fg{position:relative;flex:1;min-width:140px}
+.fl{font-size:11px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.fb{width:100%;padding:7px 10px;background:#fff;border:.5px solid #bbb;border-radius:6px;font-size:13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;font-family:inherit}
+.fb:hover{border-color:#7C5CBF}
+.pill{font-size:10px;background:#C8B4F8;color:#3C2580;border-radius:10px;padding:1px 7px}
+.dm{position:absolute;top:calc(100% + 4px);left:0;right:0;background:#fff;border:.5px solid #bbb;border-radius:6px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,.08);max-height:200px;overflow-y:auto;display:none}
+.dm.open{display:block}
+.mi{display:flex;align-items:center;gap:8px;padding:7px 10px;font-size:13px;cursor:pointer}
+.mi:hover{background:#f5f5f3}
+.mi.sa{border-bottom:.5px solid #eee;font-size:11px;color:#888;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+.mi input{accent-color:#7C5CBF;width:14px;height:14px;cursor:pointer;flex-shrink:0}
+
+.card{background:#fff;border:.5px solid #ddd;border-radius:10px;padding:16px;overflow:auto}
+svg{display:block;width:100%;overflow:visible}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;padding-top:12px;border-top:.5px solid #eee}
+.li{display:flex;align-items:center;gap:6px;font-size:12px;color:#666}
+.ls{width:10px;height:10px;border-radius:3px}
+</style>
+</head>
+<body>
+<header>Hierarchy Visualizer</header>
+<main>
+
+<div id="drop">
+  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#999" stroke-width="1.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+  <p><strong>Drop your Excel / CSV here</strong><br>or click to browse</p>
+  <input type="file" id="file-input" accept=".xlsx,.xls,.csv">
+</div>
+
+<div id="panel">
+  <div class="top">
+    <span>Loaded: <strong id="fname"></strong>&nbsp;<span class="badge" id="rcnt"></span></span>
+    <button onclick="reset()">&#8617; Change file</button>
+  </div>
+  <div class="filters" id="filters"></div>
+  <div class="card">
+    <svg id="svg" viewBox="0 0 800 300" xmlns="http://www.w3.org/2000/svg">
+      <defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+      <g id="arrows"></g><g id="nodes"></g>
+    </svg>
+    <div class="legend" id="legend"></div>
+  </div>
+</div>
+
+</main>
+<script>
+const COLORS=[
+  {f:"#C8B4F8",s:"#7C5CBF",t:"#3C2580"},
+  {f:"#B4D9F8",s:"#3A8BD4",t:"#1A4F80"},
+  {f:"#B4F0D4",s:"#2EAF6E",t:"#1A6040"},
+  {f:"#F8D8B4",s:"#C88C30",t:"#7A4A10"},
+  {f:"#F8B4D4",s:"#C83A6A",t:"#7A1A40"},
+];
+const NW=120,NH=38;
+let rows=[],cols=[],sel={};
+
+const drop=document.getElementById("drop"),fi=document.getElementById("file-input");
+drop.onclick=()=>fi.click();
+drop.ondragover=e=>{e.preventDefault();drop.classList.add("over")};
+drop.ondragleave=()=>drop.classList.remove("over");
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove("over");load(e.dataTransfer.files[0])};
+fi.onchange=()=>load(fi.files[0]);
+
+function load(file){
+  if(!file)return;
+  const r=new FileReader();
+  r.onload=e=>{
+    try{
+      const wb=XLSX.read(e.target.result,{type:"array"});
+      const data=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:""});
+      if(!data.length)return alert("No data found.");
+      init(data,file.name);
+    }catch(err){alert("Could not read file: "+err.message);}
+  };
+  r.readAsArrayBuffer(file);
+}
+
+function init(data,name){
+  rows=data;
+  const re=/^levelname(\d+)$/i;
+  cols=Object.keys(rows[0]).filter(h=>re.test(h))
+    .sort((a,b)=>+a.match(re)[1]-+b.match(re)[1])
+    .map((h,i)=>({col:h,label:h.charAt(0).toUpperCase()+h.slice(1),i}));
+  if(cols.length<2)return alert("Need at least levelname1 and levelname2 columns.");
+  sel={};cols.forEach(c=>sel[c.col]=new Set());
+  document.getElementById("fname").textContent=name;
+  document.getElementById("rcnt").textContent=rows.length+" rows";
+  drop.style.display="none";
+  document.getElementById("panel").style.display="block";
+  buildFilters();render();
+}
+
+function reset(){
+  rows=[];cols=[];sel={};
+  drop.style.display="";
+  document.getElementById("panel").style.display="none";
+  fi.value="";
+}
+
+function uniq(col){return[...new Set(rows.map(r=>r[col]).filter(v=>v!==""))].sort()}
+function filtered(){return rows.filter(r=>cols.every(c=>sel[c.col].size===0||sel[c.col].has(String(r[c.col]))))}
+
+function buildFilters(){
+  const fc=document.getElementById("filters");fc.innerHTML="";
+  cols.forEach((c,ci)=>{
+    const vals=uniq(c.col);
+    const g=document.createElement("div");g.className="fg";
+    g.innerHTML=`<div class="fl">${c.label}</div>
+      <button class="fb" id="fb${ci}">
+        <span id="ft${ci}">All</span>
+        <span style="display:flex;align-items:center;gap:4px">
+          <span class="pill" id="fp${ci}" style="display:none"></span>
+          <span id="fc${ci}">&#9662;</span>
+        </span>
+      </button>
+      <div class="dm" id="dm${ci}">
+        <div class="mi sa"><input type="checkbox" id="sa${ci}"><label for="sa${ci}" style="cursor:pointer">Select all</label></div>
+        ${vals.map((v,vi)=>`<div class="mi"><input type="checkbox" value="${v}" id="ck${ci}_${vi}"><label for="ck${ci}_${vi}" style="cursor:pointer">${v}</label></div>`).join("")}
+      </div>`;
+    fc.appendChild(g);
+
+    const btn=g.querySelector("#fb"+ci),menu=g.querySelector("#dm"+ci),sa=g.querySelector("#sa"+ci);
+    btn.onclick=e=>{e.stopPropagation();const o=menu.classList.contains("open");closeMenus();if(!o)menu.classList.add("open")};
+    sa.onchange=()=>{
+      vals.forEach(v=>sa.checked?sel[c.col].add(v):sel[c.col].delete(v));
+      menu.querySelectorAll("input[value]").forEach(ck=>ck.checked=sa.checked);
+      updBtn(ci,c.col,vals);render();
+    };
+    menu.querySelectorAll("input[value]").forEach(ck=>{
+      ck.onchange=()=>{
+        ck.checked?sel[c.col].add(ck.value):sel[c.col].delete(ck.value);
+        sa.checked=vals.every(v=>sel[c.col].has(v));
+        updBtn(ci,c.col,vals);render();
+      };
+    });
+  });
+  document.addEventListener("click",closeMenus,{once:false});
+}
+
+function closeMenus(){document.querySelectorAll(".dm").forEach(m=>m.classList.remove("open"))}
+
+function updBtn(ci,col,vals){
+  const s=sel[col],t=document.getElementById("ft"+ci),p=document.getElementById("fp"+ci);
+  if(s.size===0){t.textContent="All";p.style.display="none";}
+  else if(s.size===1){t.textContent=[...s][0];p.style.display="none";}
+  else{t.textContent=s.size+" selected";p.textContent=s.size;p.style.display="inline";}
+}
+
+function svgEl(tag){return document.createElementNS("http://www.w3.org/2000/svg",tag)}
+function setAttrs(el,obj){Object.entries(obj).forEach(([k,v])=>el.setAttribute(k,v))}
+
+function render(){
+  document.getElementById("arrows").innerHTML="";
+  document.getElementById("nodes").innerHTML="";
+
+  const active=filtered(),allN={},activeN=new Set(),activeE=new Set();
+  cols.forEach(c=>{allN[c.col]=[]});
+  rows.forEach(r=>cols.forEach(c=>{const v=String(r[c.col]);if(v&&!allN[c.col].includes(v))allN[c.col].push(v)}));
+  active.forEach(r=>{
+    cols.forEach(c=>{const v=String(r[c.col]);if(v)activeN.add(c.col+":"+v)});
+    for(let i=0;i<cols.length-1;i++){
+      const a=String(r[cols[i].col]),b=String(r[cols[i+1].col]);
+      if(a&&b)activeE.add(cols[i].col+":"+a+"->"+cols[i+1].col+":"+b);
+    }
+  });
+
+  const maxN=Math.max(...cols.map(c=>allN[c.col].length));
+  const rH=Math.max(56,Math.min(80,280/maxN)),svgH=Math.max(180,maxN*rH+80);
+  const cW=Math.max(NW+80,800/cols.length),svgW=cW*cols.length;
+  document.getElementById("svg").setAttribute("viewBox",`0 0 ${svgW} ${svgH}`);
+
+  const pos={};
+  cols.forEach((c,ci)=>allN[c.col].forEach((v,vi)=>{
+    pos[c.col+":"+v]={cx:ci*cW+cW/2,cy:(svgH-allN[c.col].length*rH)/2+rH/2+vi*rH};
+  }));
+
+  // Edges
+  const drawn=new Set();
+  rows.forEach(r=>{
+    for(let i=0;i<cols.length-1;i++){
+      const a=String(r[cols[i].col]),b=String(r[cols[i+1].col]);
+      if(!a||!b||a==="undefined"||b==="undefined")continue;
+      const k=cols[i].col+":"+a+"->"+cols[i+1].col+":"+b;
+      if(drawn.has(k))continue;drawn.add(k);
+      const pA=pos[cols[i].col+":"+a],pB=pos[cols[i+1].col+":"+b];
+      if(!pA||!pB)continue;
+      const on=activeE.has(k),cl=COLORS[i%COLORS.length];
+      const x1=pA.cx+NW/2,y1=pA.cy,x2=pB.cx-NW/2,y2=pB.cy,mx=(x1+x2)/2;
+      const p=svgEl("path");
+      setAttrs(p,{d:`M${x1} ${y1} C${mx} ${y1} ${mx} ${y2} ${x2} ${y2}`,fill:"none",
+        stroke:on?cl.s:"#ccc","stroke-width":on?"1.8":"0.8",opacity:on?"0.9":"0.18"});
+      if(on)p.setAttribute("marker-end","url(#ah)");
+      document.getElementById("arrows").appendChild(p);
+    }
+  });
+
+  // Nodes
+  const dN=new Set();
+  cols.forEach((c,ci)=>{
+    const cl=COLORS[ci%COLORS.length],hcx=ci*cW+cW/2;
+    const hg=svgEl("g"),hr=svgEl("rect"),ht=svgEl("text");
+    setAttrs(hr,{x:hcx-NW/2,y:10,width:NW,height:26,rx:6,fill:cl.f,stroke:cl.s,"stroke-width":"0.5",opacity:"0.7"});
+    setAttrs(ht,{x:hcx,y:23,"text-anchor":"middle","dominant-baseline":"central","font-size":"11","font-weight":"500",fill:cl.t});
+    ht.textContent=c.label;hg.appendChild(hr);hg.appendChild(ht);
+    document.getElementById("nodes").appendChild(hg);
+
+    allN[c.col].forEach(v=>{
+      const k=c.col+":"+v;if(dN.has(k))return;dN.add(k);
+      const {cx,cy}=pos[k],on=activeN.has(k);
+      const g=svgEl("g"),rect=svgEl("rect"),text=svgEl("text");
+      setAttrs(rect,{x:cx-NW/2,y:cy-NH/2,width:NW,height:NH,rx:8,
+        fill:on?cl.f:"#eee",stroke:on?cl.s:"#ccc","stroke-width":on?"1":"0.5",opacity:on?"1":"0.3"});
+      setAttrs(text,{x:cx,y:cy,"text-anchor":"middle","dominant-baseline":"central",
+        "font-size":"12","font-weight":on?"500":"400",fill:on?cl.t:"#aaa"});
+      text.textContent=v.length>14?v.slice(0,13)+"…":v;
+      g.appendChild(rect);g.appendChild(text);
+      document.getElementById("nodes").appendChild(g);
+    });
+  });
+
+  document.getElementById("legend").innerHTML=cols.map((c,i)=>
+    `<div class="li"><div class="ls" style="background:${COLORS[i%COLORS.length].s}"></div>${c.label}</div>`
+  ).join("");
+}
+</script>
+</body>
+</html>
